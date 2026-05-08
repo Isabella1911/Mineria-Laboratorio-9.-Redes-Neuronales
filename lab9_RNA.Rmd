@@ -1,5 +1,205 @@
 ---
-title: "lab9_RNA"
-output: html_document
+title: "Consultoría SmartStay Advisors — Redes Neuronales Artificiales"
+author: "Anggelie Velásquez, Anthony Lou, Isabella Obando"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: flatly
+    highlight: tango
 ---
 
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+```{r librerias}
+library(dplyr)
+library(ggplot2)
+library(caret)
+library(e1071)
+library(neuralnet)   # RNA principal
+library(nnet)        # multinom (para comparación con lab anterior)
+library(corrplot)
+library(tidyr)
+library(rpart)
+library(tictoc)
+```
+
+---
+
+## Preparación del entorno de datos
+
+El pipeline de preprocesamiento es idéntico al utilizado en los laboratorios
+anteriores, garantizando que los conjuntos de entrenamiento y prueba sean
+exactamente los mismos y que las comparaciones entre algoritmos sean válidas.
+
+```{r carga}
+load("listings.RData")
+
+listings$price <- as.numeric(gsub("[$,]", "", listings$price))
+listings <- listings %>% filter(!is.na(price), price > 0, price < 1000)
+
+vars_modelo <- c("price", "accommodates", "bedrooms", "bathrooms",
+                 "beds", "minimum_nights", "number_of_reviews",
+                 "review_scores_rating", "availability_365")
+
+model_df <- listings %>%
+  select(all_of(vars_modelo)) %>%
+  mutate(across(everything(), ~ ifelse(is.na(.), median(., na.rm = TRUE), .)))
+
+cat("Dimensiones:", nrow(model_df), "x", ncol(model_df), "\n")
+```
+
+```{r categorias}
+q1 <- quantile(model_df$price, 0.25)
+q3 <- quantile(model_df$price, 0.75)
+
+model_df <- model_df %>%
+  mutate(
+    precio_categoria = factor(
+      case_when(
+        price <= q1 ~ "Economica",
+        price <= q3 ~ "Intermedia",
+        TRUE        ~ "Cara"
+      ),
+      levels = c("Economica", "Intermedia", "Cara")
+    )
+  )
+
+cat("Cortes — Q1:", q1, "| Q3:", q3, "\n")
+print(table(model_df$precio_categoria))
+```
+
+```{r split}
+set.seed(42)
+
+n         <- nrow(model_df)
+train_idx <- sample(seq_len(n), size = floor(0.70 * n))
+
+train_df <- model_df[ train_idx, ]
+test_df  <- model_df[-train_idx, ]
+
+cat("Train:", nrow(train_df), "filas | Test:", nrow(test_df), "filas\n")
+cat("Distribución train:\n"); print(prop.table(table(train_df$precio_categoria)))
+cat("Distribución test:\n");  print(prop.table(table(test_df$precio_categoria)))
+```
+
+```{r subsample}
+# Subsample estratificado del 5% para acelerar el entrenamiento de RNA
+# Por cuestiones de tiempo, en la entrega si se usara todo
+set.seed(42)
+idx_sub    <- createDataPartition(train_df$precio_categoria, p = 0.05, list = FALSE)
+train_sub  <- train_df[idx_sub, ]
+cat("Tamaño submuestra train:", nrow(train_sub), "filas\n")
+cat("Distribución submuestra:\n")
+print(prop.table(table(train_sub$precio_categoria)))
+```
+
+```{r escalar}
+vars_pred <- c("accommodates", "bedrooms", "bathrooms", "beds",
+               "minimum_nights", "number_of_reviews",
+               "review_scores_rating", "availability_365")
+
+# Escalado con parámetros del train (mismo que lab anterior)
+preproc <- preProcess(train_sub[, vars_pred], method = c("center", "scale"))
+
+train_scaled <- predict(preproc, train_sub[, vars_pred])
+test_scaled  <- predict(preproc, test_df[,  vars_pred])
+
+train_scaled$precio_categoria <- train_sub$precio_categoria
+test_scaled$precio_categoria  <- test_df$precio_categoria
+train_scaled$price            <- train_sub$price
+test_scaled$price             <- test_df$price
+
+cat("Escalado aplicado. Media approx. 0 y SD approx. 1 en predictoras.\n")
+```
+
+---
+
+## Modelos de Clasificación con Redes Neuronales Artificiales
+
+Las redes neuronales artificiales aprenden representaciones no lineales de los
+datos al ajustar los pesos de las conexiones entre neuronas mediante
+retropropagación. Para clasificar los listings en categorías de precio se
+entrenaron dos arquitecturas con diferente número de capas, neuronas y
+funciones de activación.
+
+`neuralnet` requiere variables de respuesta como columnas binarias (one-hot),
+por lo que se crean tres indicadores para las tres clases.
+
+```{r preparar_onehot}
+# One-hot de la variable respuesta para neuralnet
+train_nn <- train_scaled
+test_nn  <- test_scaled
+
+train_nn$es_Economica   <- as.integer(train_nn$precio_categoria == "Economica")
+train_nn$es_Intermedia  <- as.integer(train_nn$precio_categoria == "Intermedia")
+train_nn$es_Cara        <- as.integer(train_nn$precio_categoria == "Cara")
+
+test_nn$es_Economica    <- as.integer(test_nn$precio_categoria == "Economica")
+test_nn$es_Intermedia   <- as.integer(test_nn$precio_categoria == "Intermedia")
+test_nn$es_Cara         <- as.integer(test_nn$precio_categoria == "Cara")
+
+# Fórmula compartida
+formula_nn <- as.formula(paste(
+  "es_Economica + es_Intermedia + es_Cara ~",
+  paste(vars_pred, collapse = " + ")
+))
+
+cat("Fórmula RNA:\n"); print(formula_nn)
+```
+
+---
+
+### Modelo RNA 1 — Red Profunda con activación Logística
+
+**Topología:** 3 capas ocultas con 10, 6 y 3 neuronas respectivamente  
+**Función de activación:** logística (sigmoide)  
+**Algoritmo:** backpropagation con resilient propagation (rprop+)  
+**Regularización:** threshold = 0.05
+
+Esta arquitectura más profunda puede capturar patrones complejos en los datos,
+aunque es más lenta y propensa al sobreajuste si no se controla correctamente.
+
+```{r rna_modelo1, cache=TRUE}
+set.seed(42)
+t0_rna1 <- proc.time()
+
+rna1 <- neuralnet(
+  formula_nn,
+  data          = train_nn,
+  hidden        = c(10, 6, 3),        # 3 capas ocultas
+  act.fct       = "logistic",         # función de activación sigmoide
+  linear.output = FALSE,              # clasificación, no regresión
+  threshold     = 0.1,                # umbral más relajado para convergencia rápida
+  stepmax       = 3e5,
+  lifesign      = "minimal"
+)
+
+t_rna1 <- (proc.time() - t0_rna1)["elapsed"]
+cat("Tiempo de entrenamiento RNA 1:", round(t_rna1, 2), "s\n")
+cat("Pasos hasta convergencia:", rna1$result.matrix["steps", 1], "\n")
+cat("Error final de entrenamiento:", round(rna1$result.matrix["error", 1], 4), "\n")
+```
+
+```{r rna1_pred}
+# Predicciones: se toma la clase con mayor probabilidad de salida
+pred_rna1_raw_train <- compute(rna1, train_nn[, vars_pred])$net.result
+pred_rna1_raw_test  <- compute(rna1, test_nn[,  vars_pred])$net.result
+
+# Convertir probabilidades a etiquetas de clase
+clases <- c("Economica", "Intermedia", "Cara")
+
+pred_rna1_train <- factor(clases[apply(pred_rna1_raw_train, 1, which.max)],
+                           levels = clases)
+pred_rna1_test  <- factor(clases[apply(pred_rna1_raw_test,  1, which.max)],
+                           levels = clases)
+
+cm_rna1_train <- confusionMatrix(pred_rna1_train, train_nn$precio_categoria)
+cm_rna1_test  <- confusionMatrix(pred_rna1_test,  test_nn$precio_categoria)
+
+cat("=== RNA 1 (10-6-3, logística) — Train ===\n"); print(cm_rna1_train)
+cat("\n=== RNA 1 (10-6-3, logística) — Test ===\n");  print(cm_rna1_test)
+```
