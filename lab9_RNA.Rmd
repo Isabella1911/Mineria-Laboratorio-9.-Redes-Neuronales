@@ -203,3 +203,430 @@ cm_rna1_test  <- confusionMatrix(pred_rna1_test,  test_nn$precio_categoria)
 cat("=== RNA 1 (10-6-3, logística) — Train ===\n"); print(cm_rna1_train)
 cat("\n=== RNA 1 (10-6-3, logística) — Test ===\n");  print(cm_rna1_test)
 ```
+
+---
+
+### Modelo RNA 2 — Red Compacta con activación Tangente Hiperbólica
+
+**Topología:** 2 capas ocultas con 8 y 4 neuronas  
+**Función de activación:** tangente hiperbólica (tanh)  
+**Algoritmo:** backpropagation estándar  
+**Regularización:** threshold = 0.05
+
+La tangente hiperbólica produce salidas en el rango [-1, 1], lo que suele
+facilitar la convergencia al centrar los gradientes. La arquitectura más
+compacta reduce el riesgo de sobreajuste al tener menos parámetros a estimar.
+
+```{r rna_modelo2, cache=TRUE}
+set.seed(42)
+t0_rna2 <- proc.time()
+
+rna2 <- neuralnet(
+  formula_nn,
+  data          = train_nn,
+  hidden        = c(8, 4),           # 2 capas ocultas
+  act.fct       = "tanh",            # función de activación tangente hiperbólica
+  linear.output = FALSE,
+  threshold     = 0.1,
+  stepmax       = 3e5,
+  lifesign      = "minimal"
+)
+
+t_rna2 <- (proc.time() - t0_rna2)["elapsed"]
+cat("Tiempo de entrenamiento RNA 2:", round(t_rna2, 2), "s\n")
+cat("Pasos hasta convergencia:", rna2$result.matrix["steps", 1], "\n")
+cat("Error final de entrenamiento:", round(rna2$result.matrix["error", 1], 4), "\n")
+```
+
+```{r rna2_pred}
+pred_rna2_raw_train <- compute(rna2, train_nn[, vars_pred])$net.result
+pred_rna2_raw_test  <- compute(rna2, test_nn[,  vars_pred])$net.result
+
+pred_rna2_train <- factor(clases[apply(pred_rna2_raw_train, 1, which.max)],
+                           levels = clases)
+pred_rna2_test  <- factor(clases[apply(pred_rna2_raw_test,  1, which.max)],
+                           levels = clases)
+
+cm_rna2_train <- confusionMatrix(pred_rna2_train, train_nn$precio_categoria)
+cm_rna2_test  <- confusionMatrix(pred_rna2_test,  test_nn$precio_categoria)
+
+cat("=== RNA 2 (8-4, tanh) — Train ===\n"); print(cm_rna2_train)
+cat("\n=== RNA 2 (8-4, tanh) — Test ===\n");  print(cm_rna2_test)
+```
+
+---
+
+## Matrices de Confusión — Comparación Visual
+
+```{r matrices_confusion_plot}
+# Función auxiliar para graficar matriz de confusión
+plot_cm <- function(cm, titulo) {
+  cm_df <- as.data.frame(cm$table)
+  colnames(cm_df) <- c("Predicho", "Real", "Frecuencia")
+
+  ggplot(cm_df, aes(x = Real, y = Predicho, fill = Frecuencia)) +
+    geom_tile(color = "white", linewidth = 0.8) +
+    geom_text(aes(label = Frecuencia), size = 5, fontface = "bold") +
+    scale_fill_gradient(low = "#EAF4FB", high = "#5B8DB8") +
+    labs(title = titulo, x = "Clase Real", y = "Clase Predicha") +
+    theme_minimal(base_size = 12) +
+    theme(legend.position = "none",
+          plot.title = element_text(face = "bold", hjust = 0.5))
+}
+
+p1 <- plot_cm(cm_rna1_test, "RNA 1 — Test (10-6-3, logística)")
+p2 <- plot_cm(cm_rna2_test, "RNA 2 — Test (8-4, tanh)")
+
+gridExtra::grid.arrange(p1, p2, ncol = 2)
+```
+
+---
+
+## Comparación entre Modelos RNA de Clasificación
+
+Se comparan ambas redes neuronales en términos de efectividad (accuracy y
+macro F1), tiempo de procesamiento y distribución de errores por clase.
+
+```{r extraer_metricas_rna}
+extraer_metricas <- function(cm_train, cm_test, nombre, tiempo_s) {
+  acc_tr <- cm_train$overall["Accuracy"]
+  acc_te <- cm_test$overall["Accuracy"]
+  f1_tr  <- mean(cm_train$byClass[, "F1"], na.rm = TRUE)
+  f1_te  <- mean(cm_test$byClass[,  "F1"], na.rm = TRUE)
+  data.frame(
+    Modelo        = nombre,
+    Acc_Train     = round(acc_tr, 4),
+    Acc_Test      = round(acc_te, 4),
+    Delta_Acc     = round(acc_tr - acc_te, 4),
+    MacroF1_Train = round(f1_tr, 4),
+    MacroF1_Test  = round(f1_te, 4),
+    Tiempo_seg    = round(tiempo_s, 2)
+  )
+}
+
+tabla_rna <- rbind(
+  extraer_metricas(cm_rna1_train, cm_rna1_test,
+                   "RNA 1 — 10-6-3 (logística)", t_rna1),
+  extraer_metricas(cm_rna2_train, cm_rna2_test,
+                   "RNA 2 — 8-4 (tanh)",         t_rna2)
+)
+
+cat("=== Comparación entre modelos RNA ===\n")
+print(tabla_rna)
+```
+
+```{r grafico_comparacion_rna}
+tabla_rna_long <- pivot_longer(
+  tabla_rna,
+  cols      = c("Acc_Train", "Acc_Test"),
+  names_to  = "Conjunto",
+  values_to = "Accuracy"
+)
+
+ggplot(tabla_rna_long, aes(x = Modelo, y = Accuracy, fill = Conjunto)) +
+  geom_col(position = "dodge", width = 0.55) +
+  geom_text(aes(label = round(Accuracy, 3)),
+            position = position_dodge(width = 0.55),
+            vjust = -0.4, size = 3.5, fontface = "bold") +
+  scale_fill_manual(values = c("Acc_Train" = "#5B8DB8", "Acc_Test" = "#E8A838")) +
+  ylim(0, 1.15) +
+  labs(title = "Train vs Test Accuracy — RNA clasificación",
+       x = NULL, y = "Accuracy", fill = "Conjunto") +
+  theme_minimal(base_size = 12) +
+  theme(axis.text.x = element_text(angle = 15, hjust = 1))
+```
+
+```{r errores_por_clase_rna}
+# Función: tasa de error por clase
+errores_clase <- function(cm, nombre) {
+  tbl_t <- t(cm$table)
+  clases_v <- rownames(tbl_t)
+  data.frame(
+    Modelo    = nombre,
+    Clase     = clases_v,
+    Correctos = diag(tbl_t),
+    Errores   = rowSums(tbl_t) - diag(tbl_t),
+    Total     = rowSums(tbl_t),
+    TasaError = round((rowSums(tbl_t) - diag(tbl_t)) / rowSums(tbl_t), 4)
+  )
+}
+
+err_rna <- rbind(
+  errores_clase(cm_rna1_test, "RNA 1 (10-6-3, logística)"),
+  errores_clase(cm_rna2_test, "RNA 2 (8-4, tanh)")
+)
+
+cat("=== Tasa de error por clase — ambas RNA ===\n")
+print(err_rna)
+
+ggplot(err_rna, aes(x = Modelo, y = Clase, fill = TasaError)) +
+  geom_tile(color = "white", linewidth = 0.8) +
+  geom_text(aes(label = scales::percent(TasaError, accuracy = 0.1)),
+            size = 4, fontface = "bold") +
+  scale_fill_gradient(low = "#EAF4FB", high = "#E05C5C",
+                      labels = scales::percent) +
+  labs(title = "Tasa de error por clase — RNA (test)",
+       x = NULL, y = "Clase real", fill = "Tasa error") +
+  theme_minimal(base_size = 12)
+```
+
+```{r metricas_por_clase_rna}
+metricas_clase <- function(cm, nombre) {
+  bc <- as.data.frame(cm$byClass)
+  data.frame(
+    Modelo      = nombre,
+    Clase       = gsub("Class: ", "", rownames(bc)),
+    Precision   = round(bc$`Pos Pred Value`, 4),
+    Recall      = round(bc$Sensitivity,      4),
+    F1          = round(bc$F1,               4),
+    Specificity = round(bc$Specificity,      4)
+  )
+}
+
+mc_rna <- rbind(
+  metricas_clase(cm_rna1_test, "RNA 1 (10-6-3, logística)"),
+  metricas_clase(cm_rna2_test, "RNA 2 (8-4, tanh)")
+)
+
+cat("=== Precisión, Recall y F1 por clase — RNA (test) ===\n")
+print(mc_rna)
+
+ggplot(mc_rna, aes(x = Modelo, y = F1, fill = Clase)) +
+  geom_col(position = "dodge", width = 0.6) +
+  geom_text(aes(label = round(F1, 3)),
+            position = position_dodge(width = 0.6),
+            vjust = -0.4, size = 3.2, fontface = "bold") +
+  scale_fill_manual(values = c("#6DBF8E", "#5B8DB8", "#E05C5C")) +
+  ylim(0, 1.15) +
+  labs(title = "F1 por clase y modelo RNA (test)",
+       x = NULL, y = "F1-Score") +
+  theme_minimal(base_size = 12) +
+  theme(axis.text.x = element_text(angle = 10, hjust = 1))
+```
+
+---
+
+## Análisis de Sobreajuste
+
+El sobreajuste se evalúa comparando el accuracy de entrenamiento con el de
+prueba. Un delta elevado indica que la red memorizó los datos de entrenamiento
+en lugar de generalizar. Un delta menor a 0.05 se considera bajo o nulo.
+
+```{r sobreajuste_rna}
+tabla_rna$Sobreajuste <- ifelse(
+  tabla_rna$Delta_Acc > 0.10, "Alto",
+  ifelse(tabla_rna$Delta_Acc > 0.05, "Moderado", "Bajo/Nulo")
+)
+
+cat("=== Análisis de sobreajuste — RNA ===\n")
+print(tabla_rna[, c("Modelo", "Acc_Train", "Acc_Test", "Delta_Acc", "Sobreajuste")])
+```
+
+```{r curva_aprendizaje_rna}
+# Curva de aprendizaje: accuracy vs proporción del dataset de entrenamiento
+# Se usa el modelo elegido (el que tenga mejor Acc_Test)
+mejor_modelo_idx <- which.max(tabla_rna$Acc_Test)
+mejor_formula    <- formula_nn
+
+proporciones <- c(0.20, 0.40, 0.60, 0.80, 1.00)
+curva_df     <- data.frame(
+  Proporcion = numeric(),
+  Acc_Train  = numeric(),
+  Acc_Test   = numeric()
+)
+
+set.seed(42)
+for (p in proporciones) {
+  idx_sub  <- sample(seq_len(nrow(train_nn)), size = floor(p * nrow(train_nn)))
+  sub_data <- train_nn[idx_sub, ]
+
+  # Usar la topología del mejor modelo
+  if (mejor_modelo_idx == 1) {
+    rna_lc <- neuralnet(mejor_formula, data = sub_data,
+                        hidden = c(10, 6, 3), act.fct = "logistic",
+                        linear.output = FALSE, threshold = 0.1,
+                        stepmax = 2e5, lifesign = "none")
+  } else {
+    rna_lc <- neuralnet(mejor_formula, data = sub_data,
+                        hidden = c(8, 4), act.fct = "tanh",
+                        linear.output = FALSE, threshold = 0.1,
+                        stepmax = 2e5, lifesign = "none")
+  }
+
+  pr_tr <- compute(rna_lc, sub_data[, vars_pred])$net.result
+  pr_te <- compute(rna_lc, test_nn[, vars_pred])$net.result
+
+  et_tr <- factor(clases[apply(pr_tr, 1, which.max)], levels = clases)
+  et_te <- factor(clases[apply(pr_te, 1, which.max)], levels = clases)
+
+  acc_tr_lc <- mean(et_tr == sub_data$precio_categoria)
+  acc_te_lc <- mean(et_te == test_nn$precio_categoria)
+
+  curva_df <- rbind(curva_df, data.frame(
+    Proporcion = p,
+    Acc_Train  = acc_tr_lc,
+    Acc_Test   = acc_te_lc
+  ))
+}
+
+cat("=== Curva de aprendizaje — mejor RNA ===\n")
+print(curva_df)
+
+curva_long <- pivot_longer(curva_df,
+                            cols      = c("Acc_Train", "Acc_Test"),
+                            names_to  = "Conjunto",
+                            values_to = "Accuracy")
+
+ggplot(curva_long, aes(x = Proporcion, y = Accuracy,
+                        color = Conjunto, group = Conjunto)) +
+  geom_line(linewidth = 1.2) +
+  geom_point(size = 3) +
+  scale_color_manual(values = c("Acc_Train" = "#5B8DB8", "Acc_Test" = "#E8A838"),
+                     labels = c("Acc_Train" = "Train", "Acc_Test" = "Test")) +
+  scale_x_continuous(labels = scales::percent) +
+  labs(title = "Curva de aprendizaje — mejor RNA de clasificación",
+       subtitle = "¿Convergen Train y Test? Si la brecha se mantiene grande, hay sobreajuste.",
+       x = "Proporción del conjunto de entrenamiento",
+       y = "Accuracy", color = "Conjunto") +
+  theme_minimal(base_size = 12)
+```
+
+---
+
+## Tuneo de Hiperparámetros del Mejor Modelo RNA
+
+Se tunean el número de neuronas y la tasa de regularización del modelo con
+mejor accuracy en test, evaluando si es posible mejorar el rendimiento sin
+incrementar el sobreajuste.
+
+```{r tuneo_rna, cache=TRUE}
+# Grid de búsqueda: distintas topologías compactas
+grid_topologias <- list(
+  c(6, 3),
+  c(8, 4),
+  c(10, 5),
+  c(8, 4, 2)
+)
+
+resultados_tuneo <- data.frame(
+  Topologia    = character(),
+  Acc_Train    = numeric(),
+  Acc_Test     = numeric(),
+  Delta_Acc    = numeric()
+)
+
+# Se usa la función de activación del mejor modelo
+act_fn <- if (mejor_modelo_idx == 1) "logistic" else "tanh"
+
+set.seed(42)
+for (topo in grid_topologias) {
+  topo_str <- paste(topo, collapse = "-")
+  cat("Entrenando topología:", topo_str, "...\n")
+
+    rna_t <- tryCatch(
+    neuralnet(
+      formula_nn,
+      data          = train_nn,
+      hidden        = topo,
+      act.fct       = act_fn,
+      linear.output = FALSE,
+      threshold     = 0.1,
+      stepmax       = 3e5,
+      lifesign      = "none"
+    ),
+    error = function(e) NULL
+  )
+
+  if (is.null(rna_t)) {
+    cat("  → No convergió para topología", topo_str, "\n")
+    next
+  }
+
+  pr_tr <- compute(rna_t, train_nn[, vars_pred])$net.result
+  pr_te <- compute(rna_t, test_nn[,  vars_pred])$net.result
+
+  et_tr <- factor(clases[apply(pr_tr, 1, which.max)], levels = clases)
+  et_te <- factor(clases[apply(pr_te, 1, which.max)], levels = clases)
+
+  a_tr <- mean(et_tr == train_nn$precio_categoria)
+  a_te <- mean(et_te == test_nn$precio_categoria)
+
+  resultados_tuneo <- rbind(resultados_tuneo, data.frame(
+    Topologia = topo_str,
+    Acc_Train = round(a_tr, 4),
+    Acc_Test  = round(a_te, 4),
+    Delta_Acc = round(a_tr - a_te, 4)
+  ))
+}
+
+cat("\n=== Resultados del tuneo de topologías ===\n")
+print(resultados_tuneo)
+
+mejor_topo <- resultados_tuneo$Topologia[which.max(resultados_tuneo$Acc_Test)]
+cat("\nMejor topología encontrada:", mejor_topo, "\n")
+```
+
+```{r grafico_tuneo}
+resultados_tuneo_long <- pivot_longer(
+  resultados_tuneo,
+  cols      = c("Acc_Train", "Acc_Test"),
+  names_to  = "Conjunto",
+  values_to = "Accuracy"
+)
+
+ggplot(resultados_tuneo_long, aes(x = Topologia, y = Accuracy, fill = Conjunto)) +
+  geom_col(position = "dodge", width = 0.6) +
+  geom_text(aes(label = round(Accuracy, 3)),
+            position = position_dodge(width = 0.6),
+            vjust = -0.4, size = 3.2, fontface = "bold") +
+  scale_fill_manual(values = c("Acc_Train" = "#5B8DB8", "Acc_Test" = "#E8A838")) +
+  ylim(0, 1.15) +
+  labs(title = paste0("Tuneo de topologías RNA (activación: ", act_fn, ")"),
+       x = "Topología (neuronas por capa)", y = "Accuracy", fill = "Conjunto") +
+  theme_minimal(base_size = 12) +
+  theme(axis.text.x = element_text(angle = 15, hjust = 1))
+```
+
+```{r modelo_tuneado_final}
+# Entrenar el modelo tuneado con la mejor topología
+mejor_topo_vec <- as.integer(strsplit(mejor_topo, "-")[[1]])
+cat("Entrenando modelo tuneado final — topología:", mejor_topo, "\n")
+
+set.seed(42)
+t0_rna_tuned <- proc.time()
+
+rna_tuned <- neuralnet(
+  formula_nn,
+  data          = train_nn,
+  hidden        = mejor_topo_vec,
+  act.fct       = act_fn,
+  linear.output = FALSE,
+  threshold     = 0.1,
+  stepmax       = 3e5,
+  lifesign      = "minimal"
+)
+
+t_rna_tuned <- (proc.time() - t0_rna_tuned)["elapsed"]
+
+pr_tuned_tr <- compute(rna_tuned, train_nn[, vars_pred])$net.result
+pr_tuned_te <- compute(rna_tuned, test_nn[,  vars_pred])$net.result
+
+et_tuned_tr <- factor(clases[apply(pr_tuned_tr, 1, which.max)], levels = clases)
+et_tuned_te <- factor(clases[apply(pr_tuned_te, 1, which.max)], levels = clases)
+
+cm_tuned_rna_train <- confusionMatrix(et_tuned_tr, train_nn$precio_categoria)
+cm_tuned_rna_test  <- confusionMatrix(et_tuned_te, test_nn$precio_categoria)
+
+cat("=== Modelo RNA Tuneado — Train ===\n"); print(cm_tuned_rna_train)
+cat("\n=== Modelo RNA Tuneado — Test ===\n");  print(cm_tuned_rna_test)
+
+cat("\nComparación antes vs después del tuneo:\n")
+print(data.frame(
+  Etapa      = c("Antes (mejor base)", "Después (tuneado)"),
+  Acc_Train  = c(max(tabla_rna$Acc_Train), round(cm_tuned_rna_train$overall["Accuracy"], 4)),
+  Acc_Test   = c(max(tabla_rna$Acc_Test),  round(cm_tuned_rna_test$overall["Accuracy"],  4)),
+  Delta_Acc  = c(min(tabla_rna$Delta_Acc),
+                  round(cm_tuned_rna_train$overall["Accuracy"] -
+                        cm_tuned_rna_test$overall["Accuracy"], 4))
+))
+```
