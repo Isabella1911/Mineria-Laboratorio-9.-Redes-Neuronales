@@ -681,3 +681,226 @@ evaluar_regresion <- function(real, pred, nombre, tiempo_s, conjunto) {
   )
 }
 ```
+```{r rna_regresion_1}
+# ============================================================
+# MODELO RNA REGRESIÓN 1
+# ============================================================
+
+# Topología: 10-5
+# Función de activación: logística
+# Salida lineal: TRUE, porque se predice una variable numérica continua
+
+set.seed(42)
+t0_reg1 <- proc.time()
+
+rna_reg1 <- neuralnet(
+  formula_reg,
+  data = train_reg,
+  hidden = c(10, 5),
+  act.fct = "logistic",
+  linear.output = TRUE,
+  threshold = 0.1,
+  stepmax = 3e5,
+  lifesign = "minimal"
+)
+
+t_reg1 <- (proc.time() - t0_reg1)["elapsed"]
+
+cat("Tiempo de entrenamiento RNA Regresión 1:", round(t_reg1, 2), "s\n")
+cat("Pasos hasta convergencia:", rna_reg1$result.matrix["steps", 1], "\n")
+cat("Error final:", round(rna_reg1$result.matrix["error", 1], 4), "\n")
+
+# Predicciones
+pred_reg1_train_scaled <- compute(rna_reg1, train_reg[, vars_pred])$net.result
+pred_reg1_test_scaled  <- compute(rna_reg1, test_reg[, vars_pred])$net.result
+
+pred_reg1_train <- desescalar_price(pred_reg1_train_scaled)
+pred_reg1_test  <- desescalar_price(pred_reg1_test_scaled)
+
+metricas_reg1 <- rbind(
+  evaluar_regresion(
+    train_reg$price,
+    pred_reg1_train,
+    "RNA Regresión 1 — 10-5 logística",
+    t_reg1,
+    "Train"
+  ),
+  evaluar_regresion(
+    test_reg$price,
+    pred_reg1_test,
+    "RNA Regresión 1 — 10-5 logística",
+    t_reg1,
+    "Test"
+  )
+)
+
+cat("=== Métricas RNA Regresión 1 ===\n")
+print(metricas_reg1)
+```
+
+```{r rna_regresion_2}
+# ============================================================
+# MODELO RNA REGRESIÓN 2
+# ============================================================
+
+# Topología: 8-4-2
+# Función de activación: tangente hiperbólica
+# Salida lineal: TRUE, porque se predice una variable numérica continua
+
+set.seed(42)
+t0_reg2 <- proc.time()
+
+rna_reg2 <- neuralnet(
+  formula_reg,
+  data = train_reg,
+  hidden = c(8, 4, 2),
+  act.fct = "tanh",
+  linear.output = TRUE,
+  threshold = 0.1,
+  stepmax = 3e5,
+  lifesign = "minimal"
+)
+
+t_reg2 <- (proc.time() - t0_reg2)["elapsed"]
+
+cat("Tiempo de entrenamiento RNA Regresión 2:", round(t_reg2, 2), "s\n")
+cat("Pasos hasta convergencia:", rna_reg2$result.matrix["steps", 1], "\n")
+cat("Error final:", round(rna_reg2$result.matrix["error", 1], 4), "\n")
+
+# Predicciones
+pred_reg2_train_scaled <- compute(rna_reg2, train_reg[, vars_pred])$net.result
+pred_reg2_test_scaled  <- compute(rna_reg2, test_reg[, vars_pred])$net.result
+
+pred_reg2_train <- desescalar_price(pred_reg2_train_scaled)
+pred_reg2_test  <- desescalar_price(pred_reg2_test_scaled)
+
+metricas_reg2 <- rbind(
+  evaluar_regresion(
+    train_reg$price,
+    pred_reg2_train,
+    "RNA Regresión 2 — 8-4-2 tanh",
+    t_reg2,
+    "Train"
+  ),
+  evaluar_regresion(
+    test_reg$price,
+    pred_reg2_test,
+    "RNA Regresión 2 — 8-4-2 tanh",
+    t_reg2,
+    "Test"
+  )
+)
+
+cat("=== Métricas RNA Regresión 2 ===\n")
+print(metricas_reg2)
+```
+```{r comparacion_regresion_rna}
+# ============================================================
+# COMPARACIÓN ENTRE LOS DOS MODELOS RNA DE REGRESIÓN
+# ============================================================
+
+tabla_reg_rna <- rbind(metricas_reg1, metricas_reg2)
+
+cat("=== Comparación general de RNA para regresión ===\n")
+print(tabla_reg_rna)
+
+tabla_reg_test <- tabla_reg_rna %>%
+  filter(Conjunto == "Test") %>%
+  arrange(RMSE)
+
+cat("=== Modelos ordenados por menor RMSE en Test ===\n")
+print(tabla_reg_test)
+
+mejor_reg_nombre <- tabla_reg_test$Modelo[1]
+
+cat("Mejor modelo de regresión RNA:", mejor_reg_nombre, "\n")
+
+# Gráfico comparativo de RMSE
+ggplot(tabla_reg_rna, aes(x = Modelo, y = RMSE, fill = Conjunto)) +
+  geom_col(position = "dodge", width = 0.55) +
+  geom_text(
+    aes(label = round(RMSE, 2)),
+    position = position_dodge(width = 0.55),
+    vjust = -0.4,
+    size = 3.5,
+    fontface = "bold"
+  ) +
+  labs(
+    title = "Comparación de RMSE — Modelos RNA de regresión",
+    x = NULL,
+    y = "RMSE"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(axis.text.x = element_text(angle = 15, hjust = 1))
+
+# Gráfico comparativo de R2
+ggplot(tabla_reg_rna, aes(x = Modelo, y = R2, fill = Conjunto)) +
+  geom_col(position = "dodge", width = 0.55) +
+  geom_text(
+    aes(label = round(R2, 3)),
+    position = position_dodge(width = 0.55),
+    vjust = -0.4,
+    size = 3.5,
+    fontface = "bold"
+  ) +
+  labs(
+    title = "Comparación de R² — Modelos RNA de regresión",
+    x = NULL,
+    y = "R²"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(axis.text.x = element_text(angle = 15, hjust = 1))
+```
+```{r predicho_vs_real_regresion}
+# ============================================================
+# GRÁFICO: PRECIO REAL VS PRECIO PREDICHO
+# ============================================================
+
+df_pred_reg <- data.frame(
+  Real = test_reg$price,
+  RNA_Reg1 = as.numeric(pred_reg1_test),
+  RNA_Reg2 = as.numeric(pred_reg2_test)
+)
+
+df_pred_long <- df_pred_reg %>%
+  pivot_longer(
+    cols = c("RNA_Reg1", "RNA_Reg2"),
+    names_to = "Modelo",
+    values_to = "Predicho"
+  )
+
+ggplot(df_pred_long, aes(x = Real, y = Predicho)) +
+  geom_point(alpha = 0.35) +
+  geom_abline(intercept = 0, slope = 1, linewidth = 1) +
+  facet_wrap(~ Modelo) +
+  labs(
+    title = "Precio real vs precio predicho — RNA regresión",
+    x = "Precio real",
+    y = "Precio predicho"
+  ) +
+  theme_minimal(base_size = 12)
+```
+```{r sobreajuste_regresion}
+# ============================================================
+# ANÁLISIS DE SOBREAJUSTE EN REGRESIÓN
+# ============================================================
+
+sobreajuste_reg <- tabla_reg_rna %>%
+  select(Modelo, Conjunto, RMSE, R2) %>%
+  pivot_wider(
+    names_from = Conjunto,
+    values_from = c(RMSE, R2)
+  ) %>%
+  mutate(
+    Delta_RMSE = round(RMSE_Test - RMSE_Train, 4),
+    Delta_R2 = round(R2_Train - R2_Test, 4),
+    Sobreajuste = case_when(
+      Delta_R2 > 0.10 ~ "Alto",
+      Delta_R2 > 0.05 ~ "Moderado",
+      TRUE ~ "Bajo/Nulo"
+    )
+  )
+
+cat("=== Sobreajuste en modelos RNA de regresión ===\n")
+print(sobreajuste_reg)
+```
