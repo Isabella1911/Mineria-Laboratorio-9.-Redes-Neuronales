@@ -1006,3 +1006,112 @@ ggplot(curva_reg_long, aes(x = Proporcion, y = RMSE, color = Conjunto, group = C
   ) +
   theme_minimal(base_size = 12)
 ```
+
+```{r tuneo_regresion_rna}
+# ============================================================
+# TUNEO DE HIPERPARÁMETROS PARA REGRESIÓN RNA
+# ============================================================
+
+grid_topologias_reg <- list(
+  c(5),
+  c(6, 3),
+  c(8, 4),
+  c(10, 5),
+  c(8, 4, 2)
+)
+
+grid_activaciones_reg <- c("logistic", "tanh")
+
+resultados_tuneo_reg <- data.frame(
+  Topologia = character(),
+  Activacion = character(),
+  RMSE_Train = numeric(),
+  RMSE_Test = numeric(),
+  R2_Train = numeric(),
+  R2_Test = numeric(),
+  Delta_R2 = numeric()
+)
+
+set.seed(42)
+
+for (act in grid_activaciones_reg) {
+  for (topo in grid_topologias_reg) {
+    
+    topo_str <- paste(topo, collapse = "-")
+    cat("Entrenando regresión con topología:", topo_str, "| activación:", act, "\n")
+    
+    modelo_t <- tryCatch(
+      neuralnet(
+        formula_reg,
+        data = train_reg,
+        hidden = topo,
+        act.fct = act,
+        linear.output = TRUE,
+        threshold = 0.1,
+        stepmax = 3e5,
+        lifesign = "none"
+      ),
+      error = function(e) NULL
+    )
+    
+    if (is.null(modelo_t)) {
+      cat("No convergió:", topo_str, act, "\n")
+      next
+    }
+    
+    pred_tr_scaled <- compute(modelo_t, train_reg[, vars_pred])$net.result
+    pred_te_scaled <- compute(modelo_t, test_reg[, vars_pred])$net.result
+    
+    pred_tr <- desescalar_price(pred_tr_scaled)
+    pred_te <- desescalar_price(pred_te_scaled)
+    
+    rmse_tr <- sqrt(mean((train_reg$price - pred_tr)^2))
+    rmse_te <- sqrt(mean((test_reg$price - pred_te)^2))
+    
+    r2_tr <- 1 - sum((train_reg$price - pred_tr)^2) /
+      sum((train_reg$price - mean(train_reg$price))^2)
+    
+    r2_te <- 1 - sum((test_reg$price - pred_te)^2) /
+      sum((test_reg$price - mean(test_reg$price))^2)
+    
+    resultados_tuneo_reg <- rbind(
+      resultados_tuneo_reg,
+      data.frame(
+        Topologia = topo_str,
+        Activacion = act,
+        RMSE_Train = round(rmse_tr, 4),
+        RMSE_Test = round(rmse_te, 4),
+        R2_Train = round(r2_tr, 4),
+        R2_Test = round(r2_te, 4),
+        Delta_R2 = round(r2_tr - r2_te, 4)
+      )
+    )
+  }
+}
+
+cat("=== Resultados del tuneo de regresión RNA ===\n")
+print(resultados_tuneo_reg)
+
+mejor_tuneo_reg <- resultados_tuneo_reg %>%
+  arrange(RMSE_Test) %>%
+  slice(1)
+
+cat("=== Mejor configuración tuneada para regresión ===\n")
+print(mejor_tuneo_reg)
+
+ggplot(resultados_tuneo_reg, aes(x = Topologia, y = RMSE_Test, fill = Activacion)) +
+  geom_col(position = "dodge", width = 0.6) +
+  geom_text(
+    aes(label = round(RMSE_Test, 2)),
+    position = position_dodge(width = 0.6),
+    vjust = -0.4,
+    size = 3.2,
+    fontface = "bold"
+  ) +
+  labs(
+    title = "Tuneo de hiperparámetros — RNA regresión",
+    x = "Topología",
+    y = "RMSE en Test"
+  ) +
+  theme_minimal(base_size = 12)
+```
