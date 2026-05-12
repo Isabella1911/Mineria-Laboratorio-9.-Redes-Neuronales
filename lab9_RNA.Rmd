@@ -904,3 +904,105 @@ sobreajuste_reg <- tabla_reg_rna %>%
 cat("=== Sobreajuste en modelos RNA de regresión ===\n")
 print(sobreajuste_reg)
 ```
+
+```{r curva_aprendizaje_regresion}
+# ============================================================
+# CURVA DE APRENDIZAJE DEL MEJOR MODELO DE REGRESIÓN
+# ============================================================
+
+proporciones_reg <- c(0.20, 0.40, 0.60, 0.80, 1.00)
+
+curva_reg <- data.frame(
+  Proporcion = numeric(),
+  RMSE_Train = numeric(),
+  RMSE_Test = numeric(),
+  R2_Train = numeric(),
+  R2_Test = numeric()
+)
+
+# Seleccionar la arquitectura del mejor modelo base
+if (mejor_reg_nombre == "RNA Regresión 1 — 10-5 logística") {
+  hidden_best_reg <- c(10, 5)
+  act_best_reg <- "logistic"
+} else {
+  hidden_best_reg <- c(8, 4, 2)
+  act_best_reg <- "tanh"
+}
+
+set.seed(42)
+
+for (p in proporciones_reg) {
+  idx_lc <- sample(
+    seq_len(nrow(train_reg)),
+    size = floor(p * nrow(train_reg))
+  )
+  
+  sub_reg <- train_reg[idx_lc, ]
+  
+  modelo_lc <- tryCatch(
+    neuralnet(
+      formula_reg,
+      data = sub_reg,
+      hidden = hidden_best_reg,
+      act.fct = act_best_reg,
+      linear.output = TRUE,
+      threshold = 0.1,
+      stepmax = 2e5,
+      lifesign = "none"
+    ),
+    error = function(e) NULL
+  )
+  
+  if (is.null(modelo_lc)) {
+    next
+  }
+  
+  pred_lc_train_scaled <- compute(modelo_lc, sub_reg[, vars_pred])$net.result
+  pred_lc_test_scaled  <- compute(modelo_lc, test_reg[, vars_pred])$net.result
+  
+  pred_lc_train <- desescalar_price(pred_lc_train_scaled)
+  pred_lc_test  <- desescalar_price(pred_lc_test_scaled)
+  
+  rmse_train <- sqrt(mean((sub_reg$price - pred_lc_train)^2))
+  rmse_test  <- sqrt(mean((test_reg$price - pred_lc_test)^2))
+  
+  r2_train <- 1 - sum((sub_reg$price - pred_lc_train)^2) /
+    sum((sub_reg$price - mean(sub_reg$price))^2)
+  
+  r2_test <- 1 - sum((test_reg$price - pred_lc_test)^2) /
+    sum((test_reg$price - mean(test_reg$price))^2)
+  
+  curva_reg <- rbind(
+    curva_reg,
+    data.frame(
+      Proporcion = p,
+      RMSE_Train = rmse_train,
+      RMSE_Test = rmse_test,
+      R2_Train = r2_train,
+      R2_Test = r2_test
+    )
+  )
+}
+
+cat("=== Curva de aprendizaje — mejor RNA regresión ===\n")
+print(curva_reg)
+
+curva_reg_long <- curva_reg %>%
+  pivot_longer(
+    cols = c("RMSE_Train", "RMSE_Test"),
+    names_to = "Conjunto",
+    values_to = "RMSE"
+  )
+
+ggplot(curva_reg_long, aes(x = Proporcion, y = RMSE, color = Conjunto, group = Conjunto)) +
+  geom_line(linewidth = 1.2) +
+  geom_point(size = 3) +
+  scale_x_continuous(labels = scales::percent) +
+  labs(
+    title = "Curva de aprendizaje — mejor RNA de regresión",
+    subtitle = "Comparación del error de entrenamiento y prueba",
+    x = "Proporción del conjunto de entrenamiento",
+    y = "RMSE"
+  ) +
+  theme_minimal(base_size = 12)
+```
