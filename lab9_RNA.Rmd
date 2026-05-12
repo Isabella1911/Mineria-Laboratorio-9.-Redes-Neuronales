@@ -630,3 +630,54 @@ print(data.frame(
                         cm_tuned_rna_test$overall["Accuracy"], 4))
 ))
 ```
+```{r regresion_preparacion}
+# ============================================================
+# PREPARACIÓN PARA MODELOS DE REGRESIÓN CON RNA
+# ============================================================
+
+# Para regresión se utiliza price como variable respuesta numérica.
+# Se mantienen los mismos datos de entrenamiento y prueba usados antes.
+
+train_reg <- train_scaled
+test_reg  <- test_scaled
+
+# Escalado de la variable respuesta price.
+# Esto ayuda a que neuralnet entrene con mayor estabilidad.
+preproc_y <- preProcess(
+  data.frame(price = train_reg$price),
+  method = c("center", "scale")
+)
+
+train_reg$price_scaled <- predict(preproc_y, data.frame(price = train_reg$price))$price
+test_reg$price_scaled  <- predict(preproc_y, data.frame(price = test_reg$price))$price
+
+# Fórmula de regresión
+formula_reg <- as.formula(paste(
+  "price_scaled ~",
+  paste(vars_pred, collapse = " + ")
+))
+
+cat("Fórmula RNA regresión:\n")
+print(formula_reg)
+
+# Función para regresar las predicciones a la escala original del precio
+desescalar_price <- function(pred_scaled) {
+  as.numeric(pred_scaled) * preproc_y$std["price"] + preproc_y$mean["price"]
+}
+
+# Función para evaluar modelos de regresión
+evaluar_regresion <- function(real, pred, nombre, tiempo_s, conjunto) {
+  rmse <- sqrt(mean((real - pred)^2))
+  mae  <- mean(abs(real - pred))
+  r2   <- 1 - sum((real - pred)^2) / sum((real - mean(real))^2)
+  
+  data.frame(
+    Modelo = nombre,
+    Conjunto = conjunto,
+    RMSE = round(rmse, 4),
+    MAE = round(mae, 4),
+    R2 = round(r2, 4),
+    Tiempo_seg = round(as.numeric(tiempo_s), 2)
+  )
+}
+```
